@@ -79,6 +79,7 @@ namespace firebird{
         LOG4CXX_DEBUG(firebird_log, "close_callback");
         try{
             m_manager.del_session<sid>(session->id());
+            handle_close(session->id());
         }
         catch(std::exception& e)
         {
@@ -112,7 +113,7 @@ namespace firebird{
                 LOG4CXX_FATAL(firebird_log, "远程地址:[" << session->get_remote_addr() << "],服务器类型:[" <<
                     session->get_business_type() << "],服务器ID:[" << session->get_app_id() << "]注册成功!");
             }
-            else if (msg.command == normal)
+            else if (msg.command >= normal)
             {//业务数据
                 handle_read_data(msg, session);
             }

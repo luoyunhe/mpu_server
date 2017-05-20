@@ -20,6 +20,7 @@ namespace firebird{
             socket_session_ptr session, message& msg);
 
     protected:
+        virtual void handle_close(DWORD id) = 0;
         virtual void handle_read_data(message& msg, socket_session_ptr pSession) = 0;
 
     public:

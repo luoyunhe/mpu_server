@@ -1,4 +1,5 @@
 #include "socket_session.h"
+#include <iostream>
 namespace firebird{
     boost::detail::atomic_count socket_session::m_last_id(0);
 
@@ -76,9 +77,6 @@ namespace firebird{
             if (data.length() > 0 && data != "")
             {//读到数据回调注册的READ_DATA函数
                 message msg(data);
-                //message_iarchive(msg, data);
-
-                ///std::cout<< "hello" << data.length() << data << std::endl;
                 read_data_cb(error, shared_from_this(), msg);
             }
         }
@@ -170,6 +168,7 @@ namespace firebird{
                 msg->append(tag);
                 msg->append(pLen, sizeof(dwLength));
                 msg->append(sMsg);
+                //std::cout << msg->size() << "lala" << std::endl;
 
                 boost::asio::async_write(m_socket,boost::asio::buffer(*msg, msg->size()),
                         boost::bind(&socket_session::handle_write, shared_from_this(),
