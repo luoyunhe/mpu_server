@@ -116,7 +116,7 @@ namespace firebird{
 
             char* len = (char*)&dwLength;
             memcpy(len, &sHeader[tag.length()], sizeof(dwLength));
-            std::cout << "len" << dwLength << std::endl;
+            //std::cout << "len" << dwLength << std::endl;
             sBody.resize(dwLength);
             char* pBody = &sBody[0];
 

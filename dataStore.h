@@ -16,7 +16,7 @@
 #include <string>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #define BOOST_DATE_TIME_SOURCE
-const int VECTOR_LEN = 1000;
+const int VECTOR_LEN = 10000;
 const std::string store_path("/home/pi/mpu/.store");
 void formatTimeStr(std::string& str)
 {

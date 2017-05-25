@@ -35,7 +35,7 @@ float lastval[3];
 int16_t sensors;
 
 float ypr[3];
-Quaternion q; 
+Quaternion q;
 float temp;
 float gyro[3];
 float accel[3];

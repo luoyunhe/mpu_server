@@ -1,6 +1,8 @@
 #pragma once
 #include "net2/server_socket_utils.h"
+#include "dataStore.h"
 #include <boost/thread/mutex.hpp>
+#include <boost/asio.hpp>
 #include "MotionSensor.h"
 #include <boost/filesystem.hpp>
 #include <string>
@@ -15,22 +17,37 @@
 typedef std::pair<std::string, int> PAIR;
 const std::string PATH("/home/pi/mpu/.store");
 enum event{
-    realTime = 3,
-    realTimeContinue = 4,
+    regRealTime = 3,
+    unregRealTime = 4,
     reflesh = 5,
     history = 6
 };
 class realTimeObserver : public Observer<sd_ptr>
 {
 public:
-    realTimeObserver(boost::shared_ptr<sensor>& s) : p_sensor(s) { }
+    realTimeObserver(boost::shared_ptr<sensor>& s, std::string address) : p_sensor(s)
+    {
+        p_socket.reset(new boost::asio::ip::udp::socket(m_io_service));
+        p_end_point.reset(new boost::asio::ip::udp::endpoint(\
+                    boost::asio::ip::address::from_string(address), 5555));
+        p_socket->open(p_end_point->protocol());
+    }
     ~realTimeObserver()
     {
         unreg();
+        std::string msg("bye");
+        try
+        {
+            p_socket->send_to(boost::asio::buffer(msg.c_str(), msg.size()), *p_end_point);
+        }
+        catch (boost::system::system_error &e)
+        {
+
+        }
     }
     void reg()
     {
-        std::cout << "reg" << std::endl;
+        //std::cout << "reg" << std::endl;
         p_sensor->Attach((Observer<sd_ptr>*)this);
         isReg = true;
     }
@@ -40,24 +57,39 @@ public:
         {
             p_sensor->Detach((Observer<sd_ptr>*)this);
             isReg = false;
-        std::cout << "unreg" << std::endl;
+        //std::cout << "unreg" << std::endl;
         }
     }
-    void Update(sd_ptr& p)
+    void Update(sd_ptr& data)
     {
-        boost::mutex::scoped_lock(m_mutex);
-        if(m_list.size() < 2000)
-            m_list.push_back(p);
-    }
-    void swapList(std::list<sd_ptr>& l)
-    {
-        boost::mutex::scoped_lock(m_mutex);
-        l.swap(m_list);
+        std::string msg;
+        msg.resize(36);
+        memcpy(&msg[0], data->accel, 12);
+        memcpy(&msg[12], data->gyro, 12);
+        memcpy(&msg[24], data->euler, 12);
+        /*
+        for(int i = 0; i < 3; ++i)
+            std::cout << data->accel[i] << '\t';
+        std::cout << std::endl;
+        for(int i = 0; i < 3; ++i)
+            std::cout << data->gyro[i] << '\t';
+        std::cout << std::endl;
+        */
+        try
+        {
+            p_socket->send_to(boost::asio::buffer(msg.c_str(), msg.size()), *p_end_point);
+        }
+        catch (boost::system::system_error &e)
+        {
+
+        }
+
     }
 private:
+    boost::asio::io_service m_io_service;
+    boost::shared_ptr<boost::asio::ip::udp::socket> p_socket;
+    boost::shared_ptr<boost::asio::ip::udp::endpoint> p_end_point;
     bool isReg = false;
-    boost::mutex m_mutex;
-    std::list<sd_ptr> m_list;
     boost::shared_ptr<sensor> p_sensor;
 };
 class myServer : public firebird::server_socket_utils{
@@ -67,25 +99,30 @@ protected:
     void handle_close(DWORD id)
     {
         boost::mutex::scoped_lock(m_mutex);
-        m_map.erase(id);
+        std::map<DWORD, boost::shared_ptr<realTimeObserver>>::iterator iter = m_map.find(id);
+        if(iter != m_map.end())
+            m_map.erase(iter);
+        std::map<DWORD, std::pair<std::string, data>>::iterator it = m_data_map.find(id);
+        if(it != m_data_map.end())
+            m_data_map.erase(it);
 
     }
     void handle_read_data(message& msg, firebird::socket_session_ptr pSession)
     {
         switch(msg.command)
         {
-            case realTime:
-                dealRealTime(pSession);
+            case regRealTime:
+                dealRegRealTime(pSession);
                 break;
 
-            case realTimeContinue:
-                dealRealTimeContinue(pSession);
+            case unregRealTime:
+                dealUnregRealTime(pSession);
                 break;
             case reflesh:
                 dealReflesh(pSession);
                 break;
             case history:
-
+                dealHistory(msg, pSession);
                 break;
             default:
                 std::cout << "hello" << std::endl;
@@ -93,7 +130,58 @@ protected:
         }
     }
 private:
-    void dealRealTimeContinue(firebird::socket_session_ptr p)
+    void dealHistory(message& msg, firebird::socket_session_ptr p)
+    {
+        using namespace boost::filesystem;
+        DWORD id = p->id();
+        unsigned int percent = 0;
+        std::string data_path;
+        std::string tmp(msg.data());
+        data_path.resize(tmp.size() - 4);
+        memcpy(&percent, &tmp[0], 4);
+        memcpy(&data_path[0], &tmp[4], tmp.size() - 4);
+        std::map<DWORD, std::pair<std::string, data>>::iterator it = m_data_map.find(id);
+        if((it != m_data_map.end() && it->second.first != data_path) || it == m_data_map.end())
+        {
+            if(exists(path(data_path)))
+            {
+                std::ifstream in;
+                data D;
+                in.open(data_path, std::ios::in | std::ios::binary);
+                {
+                    boost::archive::binary_iarchive ia(in);
+                    ia >> D;
+                }
+                in.close();
+                m_data_map[id] = std::make_pair(data_path, D);
+            }
+            else
+            {
+                p->async_write("error!");
+                return;
+            }
+        }
+        percent = percent % 100;
+        int size = m_data_map[id].second.getDataPtr()->size();
+        unsigned int share = size/100;
+        boost::shared_ptr<std::vector<sd_ptr>> p_data_vector = m_data_map[id].second.getDataPtr();
+        std::string response;
+        response.resize(4 + 36 * share);
+        memcpy(&response[0], &share, 4);
+        unsigned int j = 0;
+        for(unsigned int i = share*percent; i < share*(percent+1); ++i, ++j)
+        {
+            for(unsigned short x = 0; x < 3; ++x)
+                memcpy(&response[4+36*j+4*x], &(p_data_vector->operator[](i)->accel[x]), 4);
+            for(unsigned short x = 0; x < 3; ++x)
+                memcpy(&response[16+36*j+4*x], &(p_data_vector->operator[](i)->gyro[x]), 4);
+            for(unsigned short x = 0; x < 3; ++x)
+                memcpy(&response[28+36*j+4*x], &(p_data_vector->operator[](i)->euler[x]), 4);
+        }
+        p->async_write(response);
+
+    }
+    /*void dealRealTimeContinue(firebird::socket_session_ptr p)
     {
         DWORD id = p->id();
         std::list<sd_ptr> list;
@@ -121,10 +209,22 @@ private:
             std::cout << "no data"<< std::endl;
         }
     }
-    void dealRealTime(firebird::socket_session_ptr p)
+    */
+    void dealUnregRealTime(firebird::socket_session_ptr p)
     {
         DWORD id = p->id();
-        boost::shared_ptr<realTimeObserver> tmp(new realTimeObserver(m_sensor));
+        std::map<DWORD, boost::shared_ptr<realTimeObserver>>::iterator iter = m_map.find(id);
+        if(iter != m_map.end())
+            m_map.erase(id);
+        std::string msg("OK");
+        p->async_write(msg);
+        //std::cout << msg.size() << std::endl;
+    }
+    void dealRegRealTime(firebird::socket_session_ptr p)
+    {
+        DWORD id = p->id();
+        std::string address(p->socket().remote_endpoint().address().to_string());
+        boost::shared_ptr<realTimeObserver> tmp(new realTimeObserver(m_sensor, address));
         tmp->reg();
         {
             boost::mutex::scoped_lock(m_mutex);
@@ -132,7 +232,7 @@ private:
         }
         std::string msg("OK");
         p->async_write(msg);
-        std::cout << msg.size() << std::endl;
+        //std::cout << msg.size() << std::endl;
     }
     void dealReflesh(firebird::socket_session_ptr p)
     {
@@ -169,9 +269,10 @@ private:
             }
         }
         p->async_write(msg);
-        std::cout << msg.size() << std::endl;
+        //std::cout << msg.size() << std::endl;
     }
     boost::shared_ptr<sensor> m_sensor;
     std::map<DWORD, boost::shared_ptr<realTimeObserver>> m_map;
+    std::map<DWORD, std::pair<std::string, data>> m_data_map;
     boost::mutex m_mutex;
 };

@@ -17,7 +17,7 @@ std::string KDS_CODE_INFO("XXX");
 
 void net_thread_run(boost::shared_ptr<sensor> s)
 {
-    log4cxx::PropertyConfigurator::configureAndWatch("log4cxx2.properties");
+    log4cxx::PropertyConfigurator::configureAndWatch("/home/pi/mpu/pro/log4cxx2.properties");
     firebird_log = log4cxx::Logger::getLogger("test");
     myServer server(12345, s);
     server.start();

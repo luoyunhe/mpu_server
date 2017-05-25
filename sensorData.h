@@ -12,6 +12,7 @@ struct sensorData
         ar & gyro;
         ar & euler;
     }
+    sensorData(){}
     sensorData(float* a, float* g, float* e)
     {
         for(int i=0; i < 3; ++i)
@@ -20,6 +21,15 @@ struct sensorData
             gyro[i] = *(g + i);
         for(int i=0; i < 3; ++i)
             euler[i] = *(e + i);
+    }
+    sensorData(const sensorData& s)
+    {
+        for(int i=0; i < 3; ++i)
+        {
+            this->accel[i] = s.accel[i];
+            this->gyro[i] = s.gyro[i];
+            this->euler[i] = s.euler[i];
+        }
     }
     float accel[3];
     float gyro[3];
